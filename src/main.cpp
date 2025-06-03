@@ -2,50 +2,65 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <Encoder.h>
+#include <Timer.h>
 
 // DECLARATIONS
-void startScreen();
+void lcdStartScreen();
+void handleButtonPressed();
+void checkButtonPress();
 
 // DEVICES
+
+// lcd
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
+// encoder wheel/button
 Encoder knob(2, 3);
-long logicalEncoderValue = 0; // this is raw/4 as there are 4 pulses per detent
+long encoderMenuSelection = 0; // this is raw/4 as there are 4 pulses per detent
 
 long rawEncoderValue = 0;
 long lastRawEncoderValue = 0;
 
-const byte buttonPin = 4;
-volatile bool buttonPressed = false;
+const int buttonPin = 4;
+volatile bool buttonPressedFlag = false;
 
-const int buttonDelay = 500;
+// relay
+const int relayPin = 5;
+
+// thermocouple
+// const int thermocoupleCSPin = 6;
+
+// timer
+Timer buttonTimer(300);
+
 
 // REFLOW CHARACTERISTIC
-int targetPreheatRampCpS = 3; // room temp to soak C/s
-int targetSoakRampCpS = 0; // soak to reflow ramp up C/s if applicable 
-int targetReflowRampCpS = 2; // ramp from soak end to reflow C/s
-int targetCoolDownRampCpS = -4; // cool down ramp C/s
-
 int soakTimeS = 60;
 int reflowTimeS = 40;
 
 long soakTempC = 150;
-long soakEndTempC = 180;
 long reflowTempC = 225;
 
 // SYSTEM STATE
-int running = 0;
-int editing = 0;
+bool running = false;
+bool editing = false;
 int runPhase = 0;
+int editingStep = 0;
+int lastEditingStep = -1;
 
 void setup() {
   lcd.init();
   lcd.blink();
   lcd.backlight();
 
-  startScreen();
+  lcdStartScreen();
+
+  buttonTimer.reset();
 
   pinMode(buttonPin, INPUT_PULLUP); // Use internal pull-up
+
+  pinMode(relayPin, OUTPUT);
+  digitalWrite(relayPin, LOW);
 
   // Enable pin change interrupt on PCINT20 (digital pin 4)
   PCICR |= (1 << PCIE2);    // Enable PCINT2 interrupt group
@@ -53,6 +68,10 @@ void setup() {
 }
 
 void loop() {
+
+
+
+  checkButtonPress();
 
   if (!running && !editing) {
     rawEncoderValue = knob.read();
@@ -64,54 +83,117 @@ void loop() {
     }
 
     if (rawEncoderValue == 0) { // "Run" should be selected
-      if (logicalEncoderValue != 0) {
-        logicalEncoderValue = 0;
+      if (encoderMenuSelection != 0) {
+        encoderMenuSelection = 0;
         lcd.setCursor(4, 1); // Blink by "Run"
       }
     } else if (rawEncoderValue == 4) { // "Edit" should be selected
-      if (logicalEncoderValue != 1) {
-        logicalEncoderValue = 1;
+      if (encoderMenuSelection != 1) {
+        encoderMenuSelection = 1;
         lcd.setCursor(12, 1); // Blink by "Edit"
-      }
-    }
-
-    if (buttonPressed){ // user selected an option
-      buttonPressed = false; // reset flag
-      delay(buttonDelay);
-      if (logicalEncoderValue == 0){
-        running = true;
-      }else{
-        editing = true;
       }
     }
   }
 
   if (editing){
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Soak Temp:");
-    lcd.setCursor(10, 0);
-    lcd.print(soakTempC);
-    knob.write(soakTempC * 4);
-    lastRawEncoderValue = soakTempC * 4;
+    rawEncoderValue = knob.read();
 
-    while (!buttonPressed){ // edit soak temp
-      rawEncoderValue = knob.read();
+    if (editingStep == 0){
+
+      if (lastEditingStep < editingStep){
+        lastEditingStep = editingStep;
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Soak Temp:");
+        lcd.setCursor(10, 0);
+        lcd.print(soakTempC);
+        knob.write(soakTempC * 4);
+        lastRawEncoderValue = soakTempC * 4;
+      }
+
       if (rawEncoderValue != lastRawEncoderValue){
         lastRawEncoderValue = rawEncoderValue;
         lcd.setCursor(10, 0);
         lcd.print("   ");
         lcd.setCursor(10, 0);
         lcd.print(rawEncoderValue / 4);
+        soakTempC = rawEncoderValue / 4;
       }
-    }
-    soakTempC = rawEncoderValue / 4;
-    buttonPressed = false;
-    delay(buttonDelay);
 
-    editing = false;
-    lcd.clear();
-    startScreen();
+    }else if (editingStep == 1){
+
+      if (lastEditingStep < editingStep){
+        lastEditingStep = editingStep;
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Soak Time:");
+        lcd.setCursor(10, 0);
+        lcd.print(soakTimeS);
+        knob.write(soakTimeS * 4);
+        lastRawEncoderValue = soakTimeS * 4;
+      }
+
+      if (rawEncoderValue != lastRawEncoderValue){
+        lastRawEncoderValue = rawEncoderValue;
+        lcd.setCursor(10, 0);
+        lcd.print("   ");
+        lcd.setCursor(10, 0);
+        lcd.print(rawEncoderValue / 4);
+        soakTimeS = rawEncoderValue / 4;
+      }
+
+    }else if (editingStep == 2){
+
+      if (lastEditingStep < editingStep){
+        lastEditingStep = editingStep;
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Reflow Temp:");
+        lcd.setCursor(12, 0);
+        lcd.print(reflowTempC);
+        knob.write(reflowTempC * 4);
+        lastRawEncoderValue = reflowTempC * 4;
+      }
+
+      if (rawEncoderValue != lastRawEncoderValue){
+        lastRawEncoderValue = rawEncoderValue;
+        lcd.setCursor(12, 0);
+        lcd.print("   ");
+        lcd.setCursor(12, 0);
+        lcd.print(rawEncoderValue / 4);
+        reflowTempC = rawEncoderValue / 4;
+      }
+
+    }else if (editingStep == 3){
+    
+      if (lastEditingStep < editingStep){
+        lastEditingStep = editingStep;
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Reflow Time:");
+        lcd.setCursor(12, 0);
+        lcd.print(reflowTimeS);
+        knob.write(reflowTimeS * 4);
+        lastRawEncoderValue = reflowTimeS * 4;
+      }
+
+      if (rawEncoderValue != lastRawEncoderValue){
+        lastRawEncoderValue = rawEncoderValue;
+        lcd.setCursor(12, 0);
+        lcd.print("   ");
+        lcd.setCursor(12, 0);
+        lcd.print(rawEncoderValue / 4);
+        reflowTimeS = rawEncoderValue / 4;
+      }
+
+    }else{
+      editingStep = 0;
+      editing = false;
+    }
   }
 
   if (running){
@@ -124,18 +206,22 @@ void loop() {
 }
 
 
-void startScreen(){
+void lcdStartScreen(){
   lcd.setCursor(0, 0);
-  lcd.print("S:");
-  lcd.setCursor(2, 0);
-  lcd.print(soakTempC);
-  lcd.setCursor(6, 0);
-  lcd.print("R:");
+  lcd.print("S");
+  lcd.setCursor(1, 0);
+  lcd.print(soakTempC); // 3 digits
+  lcd.setCursor(4, 0);
+  lcd.print("/");
+  lcd.setCursor(5, 0);
+  lcd.print(soakTimeS); // as many as 3?
   lcd.setCursor(8, 0);
+  lcd.print("R");
+  lcd.setCursor(9, 0);
   lcd.print(reflowTempC);
   lcd.setCursor(12, 0);
-  lcd.print("T:");
-  lcd.setCursor(14, 0);
+  lcd.print("/");
+  lcd.setCursor(13, 0);
   lcd.print(reflowTimeS);
 
   lcd.setCursor(0, 1);
@@ -147,9 +233,26 @@ void startScreen(){
   knob.write(0); // Start encoder value at 0
 }
 
+void handleButtonPressed(){
+  if (!running && !editing){
+    if (encoderMenuSelection == 0) running = true;
+    if (encoderMenuSelection == 1) editing = true;
+  }else if (editing){
+    editingStep ++;
+  }
+}
+
+void checkButtonPress() {
+  if (buttonPressedFlag && buttonTimer.isExpired()) {
+    buttonPressedFlag = false;
+    handleButtonPressed();
+  }
+}
+
+// ISR – triggered on pin change
 ISR(PCINT2_vect) {
-  // Debounce or ignore if not falling edge
-  if (digitalRead(buttonPin) == LOW) {
-    buttonPressed = true;
+  if (digitalRead(buttonPin) == LOW && buttonTimer.isExpired()) {
+    buttonPressedFlag = true;     // Set flag
+    buttonTimer.reset();          // Start debounce timer
   }
 }
