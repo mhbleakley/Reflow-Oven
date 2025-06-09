@@ -3,6 +3,8 @@
 #include <LiquidCrystal_I2C.h>
 #include <Encoder.h>
 #include <Timer.h>
+#include <SPI.h>
+
 
 // DECLARATIONS
 void lcdStartScreen();
@@ -28,11 +30,10 @@ volatile bool buttonPressedFlag = false;
 const int relayPin = 5;
 
 // thermocouple
-// const int thermocoupleCSPin = 6;
+const int thermocoupleCSPin = 10;
 
 // timer
 Timer buttonTimer(300);
-
 
 // REFLOW CHARACTERISTIC
 int soakTimeS = 60;
@@ -49,28 +50,68 @@ int editingStep = 0;
 int lastEditingStep = -1;
 
 void setup() {
+
+  // serial
+  Serial.begin(9600);
+
+  // LCD
   lcd.init();
   lcd.blink();
   lcd.backlight();
 
   lcdStartScreen();
 
+  // timer
   buttonTimer.reset();
 
+  // button
   pinMode(buttonPin, INPUT_PULLUP); // Use internal pull-up
-
-  pinMode(relayPin, OUTPUT);
-  digitalWrite(relayPin, LOW);
 
   // Enable pin change interrupt on PCINT20 (digital pin 4)
   PCICR |= (1 << PCIE2);    // Enable PCINT2 interrupt group
   PCMSK2 |= (1 << PCINT20); // Enable interrupt on pin 4
+
+  // SSR
+  pinMode(relayPin, OUTPUT);
+  digitalWrite(relayPin, LOW);
+
+  // thermocouple
+  pinMode(thermocoupleCSPin, OUTPUT);
+  digitalWrite(thermocoupleCSPin, HIGH);
+  SPI.begin();
+  SPI.setClockDivider(SPI_CLOCK_DIV16);
+  SPI.setDataMode(SPI_MODE3);
+  SPI.setBitOrder(MSBFIRST); // confirmed
+  // must drive CS high after reading for chip to update
+  // bytes 31-18 are temp (31 is sign)
+  // byte 17 is reserved, 16 indicates a fault (fault = 1)
+  // bytes 15-4 are internal temp data (15 is sign)
+  // byte 3 is reserved, bytes 2-0 indicate different faults
+  // 2: short to VCC = 1
+  // 1: short to GND = 1
+  // 0: open circuit = 1
+
+  byte data[4];
+  while (true){
+    digitalWrite(thermocoupleCSPin, LOW);
+
+    for(int i = 0; i < 4; i++){
+      data[i] = SPI.transfer(0xFF);
+    }
+
+    digitalWrite(thermocoupleCSPin, HIGH);
+
+    Serial.print("Data:");
+    for(int i = 0; i < 4; i++){
+      Serial.print(data[i], HEX);
+    }
+    Serial.println();
+
+    delay(1000);
+  }
 }
 
 void loop() {
-
-
-
   checkButtonPress();
 
   if (!running && !editing) {
