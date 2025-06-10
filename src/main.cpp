@@ -80,7 +80,7 @@ void setup() {
   digitalWrite(thermocoupleCSPin, HIGH);
   SPI.begin();
   SPI.setClockDivider(SPI_CLOCK_DIV16);
-  SPI.setDataMode(SPI_MODE3);
+  SPI.setDataMode(SPI_MODE0);
   SPI.setBitOrder(MSBFIRST); // confirmed
   // must drive CS high after reading for chip to update
   // bytes 31-18 are temp (31 is sign)
@@ -96,7 +96,7 @@ void setup() {
     digitalWrite(thermocoupleCSPin, LOW);
 
     for(int i = 0; i < 4; i++){
-      data[i] = SPI.transfer(0xFF);
+      data[i] = SPI.transfer(0xFE);
     }
 
     digitalWrite(thermocoupleCSPin, HIGH);
